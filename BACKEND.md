@@ -10,6 +10,8 @@ Copy `server/.env.example` to `server/.env` locally, or set the values in Render
 - `GEMINI_API_KEY`: your own Gemini API key with Google Search grounding enabled/available for its model and project.
 - `JWT_SECRET`: random secret (Render's Blueprint generates one).
 - `GEMINI_MODEL`: a supported model enabled for your key; the default is `gemini-3.8-flash`. Set the same value in Render's Environment settings. New Gemini accounts cannot use the previous `gemini-2.5-flash` default. Gemini 3.8 requests omit removed sampling parameters such as `temperature`.
+
+The city research step uses Google Search grounding. Google's current Gemini 3.8 pricing lists this feature only for the paid tier; a working API key alone does not establish grounding access or available quota. Check the key's project in [Google AI Studio](https://aistudio.google.com/) and review [Google's pricing](https://ai.google.dev/gemini-api/docs/pricing) before enabling billing. Provider quota failures produce `AI_QUOTA_EXCEEDED` with a readable message; raw provider error JSON is not returned to visitors. Configuration readiness is not a live Gemini quota check.
 - `DEMO_MODE=false`; `NODE_ENV=production` for hosting.
 
 Never paste private keys or database passwords into chat or commit `.env` files.

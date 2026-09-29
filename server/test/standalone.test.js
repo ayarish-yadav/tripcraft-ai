@@ -1,7 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createApp} from '../app.js';
+import {createApp,errorResponse} from '../app.js';
+import {ApiError} from '@google/genai';
 import {serviceStatus} from '../config/status.js';
+
+test('provider quota and model errors return readable messages without raw upstream JSON',()=>{
+  for(const status of [429,404,403]){
+    const error=new ApiError({status,message:JSON.stringify({error:{code:status,message:'private upstream detail'}})});
+    const response=errorResponse(error);
+    assert.equal(response.status,503);
+    assert.equal(response.code,status===429?'AI_QUOTA_EXCEEDED':'AI_PROVIDER_UNAVAILABLE');
+    assert.ok(!response.message.includes('private upstream detail'));
+    assert.ok(!response.message.includes('{'));
+  }
+  assert.deepEqual(errorResponse(Object.assign(Error('Enter a destination.'),{status:400})),{status:400,message:'Enter a destination.'});
+});
 
 test('independent hosting serves deep links and keeps missing assets and API errors distinct',async()=>{
   const server=createApp({demo:true}).listen(0,'127.0.0.1');

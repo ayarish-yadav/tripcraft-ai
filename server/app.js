@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import {ApiError} from '@google/genai';
 import {existsSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import authRoutes from './routes/authRoutes.js';
@@ -8,6 +9,14 @@ import aiRoutes from './routes/aiRoutes.js';
 import tripRoutes from './routes/tripRoutes.js';
 import {getWeather} from './services/weatherService.js';
 import {serviceStatus} from './config/status.js';
+
+export function errorResponse(err) {
+  if(err instanceof ApiError){
+    const quota=err.status===429;
+    return {status:503,code:quota?'AI_QUOTA_EXCEEDED':'AI_PROVIDER_UNAVAILABLE',message:quota?'AI trip planning is unavailable because the service has reached its usage limit. Please try again later.':'AI trip planning is temporarily unavailable. Please try again later.'};
+  }
+  return {status:err.status||500,message:err.status?err.message:'Something went wrong. Please try again.'};
+}
 
 export function createApp({demo=false,getStatus=()=>serviceStatus({demo})}={}) {
   const app=express();
@@ -53,7 +62,8 @@ export function createApp({demo=false,getStatus=()=>serviceStatus({demo})}={}) {
   app.use((_req,res)=>res.status(404).send('TripCraft: page not found.'));
   app.use((err,req,res,next)=>{
     console.error(err.message);
-    res.status(err.status||500).json({message:err.status?err.message:'Something went wrong. Please try again.'});
+    const {status,...body}=errorResponse(err);
+    res.status(status).json(body);
   });
   return app;
 }

@@ -21,7 +21,7 @@ test('normalizes aliases into one attraction and preserves non-Latin names',()=>
 });
 test('AI repairs a duplicated itinerary once, and does not silently use demo',async()=>{
  let calls=0;
- const ai={models:{generateContent:async options=>{calls++;assert.ok(options.config.responseJsonSchema);const p=plan();if(calls===1)p.itinerary[1].activities[0].placeId='place-1';return {text:JSON.stringify(p)}}}};
+ const ai={models:{generateContent:async options=>{calls++;assert.ok(options.config.responseJsonSchema);assert.ok(!("temperature" in options.config));assert.notEqual(options.model,"gemini-2.5-flash");const p=plan();if(calls===1)p.itinerary[1].activities[0].placeId='place-1';return {text:JSON.stringify(p)}}}};
  const result=await generate(form,'Create trip',{ai,research:async()=>catalog});
  assert.equal(calls,2);assert.equal(result.source,'ai');assert.equal(result.cityPlaces.length,6);
  assert.equal(new Set(result.itinerary.flatMap(d=>d.activities.map(a=>a.placeId))).size,6);
@@ -41,7 +41,7 @@ test('targeted replan preserves the other days',async()=>{
 });
 test('research requires search grounding and caches valid city-only results',async()=>{
  let calls=0;
- const ai={models:{generateContent:async options=>{calls++;assert.deepEqual(options.config.tools,[{googleSearch:{}}]);return {text:JSON.stringify({city:'Fixture City',country:'Test',places:catalog.places}),candidates:[{groundingMetadata:{groundingChunks:[{web:{uri:'https://example.com/fixture',title:'Fixture'}}]}}]}}}};
+ const ai={models:{generateContent:async options=>{calls++;assert.deepEqual(options.config.tools,[{googleSearch:{}}]);assert.ok(!("temperature" in options.config));return {text:JSON.stringify({city:'Fixture City',country:'Test',places:catalog.places}),candidates:[{groundingMetadata:{groundingChunks:[{web:{uri:'https://example.com/fixture',title:'Fixture'}}]}}]}}}};
  const options={...form,destination:'Fixture City - test only'};
  await researchCity(ai,options,{model:'test'});await researchCity(ai,options,{model:'test'});assert.equal(calls,1);
  const ungrounded={models:{generateContent:async()=>({text:'{}'})}};

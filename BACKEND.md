@@ -9,7 +9,7 @@ Copy `server/.env.example` to `server/.env` locally, or set the values in Render
 - `MONGO_URI`: your MongoDB connection URI. Authorize the Render service's outbound IPs in Atlas.
 - `GEMINI_API_KEY`: your own Gemini API key with Google Search grounding enabled/available for its model and project.
 - `JWT_SECRET`: random secret (Render's Blueprint generates one).
-- `GEMINI_MODEL`: a supported model enabled for your key; existing default is `gemini-2.5-flash`.
+- `GEMINI_MODEL`: a supported model enabled for your key; the default is `gemini-3.8-flash`. Set the same value in Render's Environment settings. New Gemini accounts cannot use the previous `gemini-2.5-flash` default. Gemini 3.8 requests omit removed sampling parameters such as `temperature`.
 - `DEMO_MODE=false`; `NODE_ENV=production` for hosting.
 
 Never paste private keys or database passwords into chat or commit `.env` files.

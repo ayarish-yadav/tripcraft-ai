@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: tripcraft-by-ayarish
+    runtime: node
+    plan: free
+    buildCommand: npm ci --include=dev && npm run build && npm --prefix server test && npm run test:render
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      - key: DEMO_MODE
+        value: "false"
+      - key: VITE_API_URL
+        value: /api
+      - key: VITE_DEMO_MODE
+        value: "false"
+      - key: TRUST_PROXY_HOPS
+        value: "1"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: MONGO_URI
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash

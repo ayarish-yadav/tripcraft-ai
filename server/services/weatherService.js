@@ -1,1 +1,5 @@
-export async function getWeather(destination){const geo=await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(destination)}&count=1`,{signal:AbortSignal.timeout(10000)}).then(r=>r.json());const p=geo.results?.[0];if(!p)throw Object.assign(Error('Destination not found.'),{status:404});return fetch(`https://api.open-meteo.com/v1/forecast?latitude=${p.latitude}&longitude=${p.longitude}&daily=temperature_2m_max,precipitation_probability_max&timezone=auto&forecast_days=7`,{signal:AbortSignal.timeout(10000)}).then(r=>r.json());}
+import {resolveDestination,publicJSON} from './cityResearch.js';
+export async function getWeather(destination){
+  const p=await resolveDestination(destination);
+  return publicJSON(`https://api.open-meteo.com/v1/forecast?latitude=${p.lat}&longitude=${p.lon}&daily=temperature_2m_max,precipitation_probability_max&timezone=auto&forecast_days=7`);
+}

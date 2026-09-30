@@ -36,13 +36,13 @@ export function createApp({demo=false,getStatus=()=>serviceStatus({demo})}={}) {
   app.get('/api/ready',(_req,res)=>{const status=getStatus();res.set('Cache-Control','no-store').status(status.ready?200:503).json(status);});
   const requireFeature=feature=>(_req,res,next)=>{
     if(getStatus().features[feature])return next();
-    res.status(503).set('Retry-After','30').json({code:'SERVICE_NOT_READY',message:feature==='aiPlanning'?'AI trip planning is awaiting activation. Please check service status and try again later.':'Accounts and saved trips are awaiting activation. Please check service status and try again later.'});
+    res.status(503).set('Retry-After','30').json({code:'SERVICE_NOT_READY',message:feature==='tripPlanning'?'Trip planning is reconnecting. Please check service status and try again later.':'Accounts and saved trips are awaiting activation. Please check service status and try again later.'});
   };
   if(demo){
     app.use(['/api/auth','/api/ai','/api/trips'],(_req,res)=>res.status(503).json({message:'This server runs in demo mode. Connect MongoDB and Gemini to enable accounts and AI.'}));
   }else{
     app.use('/api/auth',requireFeature('accounts'),authRoutes);
-    app.use('/api/ai',requireFeature('aiPlanning'),aiRoutes);
+    app.use('/api/ai',requireFeature('tripPlanning'),aiRoutes);
     app.use('/api/trips',requireFeature('savedTrips'),tripRoutes);
   }
   app.get('/api/weather',async(req,res)=>{

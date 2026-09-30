@@ -1,24 +1,35 @@
 # TripCraft full-stack backend
 
-The included Express backend serves both React and `/api` on the same domain. MongoDB stores users and trips; JWT protects planning and trip endpoints; Gemini provides destination research and scheduling. The Render recipe is configured for **live mode**, not an offline demo.
+Express serves React and `/api` on one domain. MongoDB persists real accounts and saved trips; JWT protects account data. The production planner works without a Gemini key or paid Google Search grounding.
+
+## Free mode
+
+The default is `GEMINI_ENABLED=false`. No Gemini request is sent, even if `GEMINI_API_KEY` is already present. Existing keys remain private and can be kept for optional future use. No billing activation or purchased domain is needed for the assigned Render address.
+
+1. Open-Meteo / GeoNames resolves the requested city and country. Country/state qualifiers are checked. Bali and Dolomites also have explicit region coordinates.
+2. Wikivoyage supplies named, geolocated sightseeing listings. Larger cities use their linked district guides. Places outside the destination radius, closed listings, accommodation and transport listings are excluded.
+3. OpenStreetMap provides a secondary source when the guide has insufficient coverage. Public data sources can be unavailable or incomplete; the app never invents attractions or cycles through a sample list to fill a trip.
+4. The free scheduler prioritizes guide highlights and selected interests, groups nearby attractions, adds meal breaks and transfer allowances, and assigns each place once. Amounts are budget allowances, not verified admission prices.
+5. Quality checks reject duplicate places, invalid timing, unknown place IDs and excessive budget allocations. Insufficient coverage asks the user to shorten the trip or choose a nearby city.
+6. Catalogs cache for six hours, up to 50 destinations per process. User itineraries are not shared between accounts. Stable place IDs allow targeted edits without changing the other days.
+7. Free Smart Replan supports cheaper food/local travel allowances, indoor alternatives for rain, and a dinner change. It does not claim to understand arbitrary requests or perform bookings. Rain changes are based on the request, not assumed live weather.
+
+Free plans are labelled `source: "free"`; they are generated from live public destination data, not offline demo templates. Source attribution and license links appear in the city explorer and PDF. Wikivoyage descriptions are adapted under CC BY-SA 4.0; OSM data is attributed under ODbL. Scheduling code and budget calculations are separate from the guide text.
 
 ## Required private configuration
 
-Copy `server/.env.example` to `server/.env` locally, or set the values in Render's Environment settings:
+Copy `server/.env.example` to `server/.env` locally, or set values privately in Render's Environment settings:
 
-- `MONGO_URI`: your MongoDB connection URI. Authorize the Render service's outbound IPs in Atlas.
-- `GEMINI_API_KEY`: your own Gemini API key with Google Search grounding enabled/available for its model and project.
-- `JWT_SECRET`: random secret (Render's Blueprint generates one).
-- `GEMINI_MODEL`: a supported model enabled for your key; the default is `gemini-3.8-flash`. Set the same value in Render's Environment settings. New Gemini accounts cannot use the previous `gemini-2.5-flash` default. Gemini 3.8 requests omit removed sampling parameters such as `temperature`.
+- `MONGO_URI`: MongoDB connection URI. Use an Atlas free cluster for a no-cost college project and allow the Render service's outbound IPs.
+- `JWT_SECRET`: random secret of at least 32 characters.
+- `DEMO_MODE=false`, `NODE_ENV=production` for hosting.
+- `TRUST_PROXY_HOPS=1` on Render; `0` locally.
 
-The city research step uses Google Search grounding. Google's current Gemini 3.8 pricing lists this feature only for the paid tier; a working API key alone does not establish grounding access or available quota. Check the key's project in [Google AI Studio](https://aistudio.google.com/) and review [Google's pricing](https://ai.google.dev/gemini-api/docs/pricing) before enabling billing. Provider quota failures produce `AI_QUOTA_EXCEEDED` with a readable message; raw provider error JSON is not returned to visitors. Configuration readiness is not a live Gemini quota check.
-- `DEMO_MODE=false`; `NODE_ENV=production` for hosting.
+Never commit `.env` files or share database passwords and API keys in chat. The server starts while the database connects. `/api/health` reports configuration; `/api/ready` is ready once MongoDB and authentication are ready. A Gemini key is optional and does not gate trip planning.
 
-Never paste private keys or database passwords into chat or commit `.env` files.
+At build time use `VITE_API_URL=/api`, `VITE_DEMO_MODE=false`. Vite proxies `/api` to port 5000 in local development.
 
-At build time use `VITE_API_URL=/api`, `VITE_DEMO_MODE=false`. The client defaults to live `/api` even without a client env file. For local development Vite proxies `/api` to port 5000.
-
-## Local run in VS Code
+## Run in VS Code
 
 ```sh
 npm ci
@@ -26,55 +37,39 @@ npm run build
 npm start
 ```
 
-Open `http://localhost:5000`, create an account, then plan a trip. The website starts even when credentials are missing. `/api/health` reports connection state, `/api/ready` returns HTTP 503 until database, authentication and AI configuration are ready, and dependent endpoints return a clear 503 instead of accepting requests. The site never silently switches to demo mode. `/status` shows availability to visitors. MongoDB initial connection failures retry every 30 seconds.
+Open `http://localhost:5000`, create an account, and plan a trip. For development, run `npm run dev` and `npm run server` in separate terminals. MongoDB connection failures retry every 30 seconds.
 
-For a deliberately offline sample only:
+## Optional Gemini enhancement
 
-```sh
-VITE_DEMO_MODE=true npm run build
-DEMO_MODE=true npm start
-```
+Only set `GEMINI_ENABLED=true` if you deliberately want Gemini scheduling. Also provide `GEMINI_API_KEY` and `GEMINI_MODEL` (default `gemini-3.8-flash`). It receives the already researched public catalog; **no Google Search tool is used**. Free generation quota and model access depend on the Google project. An enabled, billing-linked key can incur provider charges, so leave the default disabled for zero AI API usage.
 
-Rebuild without `VITE_DEMO_MODE=true` before live deployment.
+AI output is schema-checked and repaired at most once. Quota/model failures, timeout or invalid output use the free scheduler, clearly labelled. A five-minute cooldown avoids repeatedly calling an unavailable provider. Optional AI status means configured, not guaranteed quota availability.
 
-## AI pipeline
-
-1. Authenticated request validates city, dates, days, party size, interests, budget and pace.
-2. Gemini with Google Search researches a destination catalog: actual landmark names, aliases, areas, highlights, alternatives, visit suggestions and source links. No-source research fails clearly.
-3. A separate schema-constrained scheduling request picks distinct place IDs and groups visits by area. It includes duration, transfer allowance, descriptive activities and map searches. Sources and Google search attribution accompany the result.
-4. Server checks prevent repeating the same catalog place, reject unknown IDs, require distinct day titles, validate visit times and transfer gaps, and limit activity/food/local transport allocations to leave space for stays.
-5. One repair attempt includes validation errors; persistent invalid output fails rather than returning a repeated plan.
-6. City-only research caches for six hours (maximum 50 entries per process). User itineraries and requests are not cached between accounts.
-7. A Day N replan restores untouched days before validation. The database saves only when the user chooses Save.
-
-These checks reduce repetition; they do not establish that every attraction is open, every geographical route is optimal, or every AI statement is true. Show sources and confirm details before booking.
-
-## Endpoints
+## API
 
 | Method | Path | Authentication | Purpose |
 |---|---|---|---|
-| GET | `/api/health` | Public | Website liveness, configuration and feature availability |
-| GET | `/api/ready` | Public | HTTP 200 when configured/connected; 503 while setup is incomplete |
-| POST | `/api/auth/signup` | Public, limited | Create user with hashed password |
-| POST | `/api/auth/login` | Public, limited | Issue signed token |
-| POST | `/api/ai/plan` | JWT, limited | Research city and generate itinerary |
-| POST | `/api/ai/replan` | JWT, limited | Revise and validate trip |
+| GET | `/api/health` | Public | Connection state and feature availability |
+| GET | `/api/ready` | Public | Ready when database and auth are available |
+| POST | `/api/auth/signup` | Public, limited | Create a user with a hashed password |
+| POST | `/api/auth/login` | Public, limited | Issue a JWT |
+| POST | `/api/ai/plan` | JWT, limited | Free itinerary; optional Gemini if explicitly enabled |
+| POST | `/api/ai/replan` | JWT, limited | Replan and validate |
 | GET | `/api/trips` | JWT | List current user's trips |
 | POST | `/api/trips` | JWT | Save/update current user's trip |
 | DELETE | `/api/trips/:id` | JWT | Delete only current user's trip |
 | GET | `/api/weather?destination=...` | Public | Open-Meteo forecast |
 
-Send `Authorization: Bearer <token>` on protected endpoints. AI requests may take several minutes because research and validation are sequential. Provider quotas and charges depend on your Google project.
+Existing `/api/ai/*` URLs remain compatible. Protected routes use `Authorization: Bearer <token>`. First-time city research may take several seconds; repeat requests use the catalog cache.
 
-## Render and tripcraftbyayarish.com
+## Hosting
 
-Connect Render to `ayarish-yadav/tripcraft-ai`, branch `main`. For the existing TripCraft service, update its source connection and keep the existing environment variables. For a new service, create a Render Blueprint from `render.yaml`, provide the required private values, and verify the service deploy. The initial deployment uses the address assigned by Render. The user confirmed they do not own `tripcraftbyayarish.com`, so no custom domain is requested in the deployment configuration. A domain can be added after registration and ownership verification. No domain has been purchased and no DNS records have been changed.
+Render uses `ayarish-yadav/tripcraft-ai`, branch `main`, with automatic deployments on push. Build: `npm ci --include=dev && npm run build && npm --prefix server test && npm run test:render`. Start: `npm start`. `render.yaml` selects a free Node service and disables optional Gemini by default.
+
+The independent site is https://tripcraft-by-ayarish.onrender.com/. No custom domain is configured because the owner does not own `tripcraftbyayarish.com`. Free Render hosting can sleep when idle and has usage limits; public data providers also have service limits. No paid resources, purchases, billing activation or uptime-pinging service are part of this setup.
 
 ## Verification
 
-- Unit tests use deterministic AI fixtures to exercise the validation and repair flow, distinct stop logic, alias normalization, research metadata requirements and cache, targeted replanning, JWT rejection and input validation.
-- HTTP tests check same-origin frontend/API behavior, route refreshes, missing assets, setup-required responses, feature gating, and readiness transitions.
-- Rendering checks exercise eight React pages.
-- **The original Render deployment passed its test suite. Current Gemini access and MongoDB persistence must be verified on the deployed service after its private connections are configured.** See [DEPLOYMENT-STATUS.md](DEPLOYMENT-STATUS.md).
+`npm --prefix server test` covers free planning, budget/time/place invariants, AI quota fallback, no AI calls in default mode, targeted replans, public-data parsing, country matching, source attribution, cache behavior, JWT validation and HTTP readiness. `npm run test:render` renders all eight pages. Fixture tests complement deployment checks; they are not a claim that a third-party provider will always be reachable.
 
-References: [Google Search grounding](https://ai.google.dev/gemini-api/docs/generate-content/google-search), [structured output](https://ai.google.dev/gemini-api/docs/generate-content/structured-output), [Render custom domains](https://render.com/docs/custom-domains).
+Sources: [MediaWiki API](https://www.mediawiki.org/wiki/API:Revisions), [Wikivoyage listings](https://en.wikivoyage.org/wiki/Wikivoyage:Listings), [OpenStreetMap attribution](https://www.openstreetmap.org/copyright), [Open-Meteo geocoding](https://open-meteo.com/en/docs/geocoding-api), [Render free services](https://render.com/docs/free).

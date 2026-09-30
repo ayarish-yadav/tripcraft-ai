@@ -49,7 +49,7 @@ test('live setup serves the website while returning prompt, truthful 503 respons
     const health=await healthResponse.json();
     assert.equal(healthResponse.status,200);
     assert.equal(health.status,'setup_required');
-    assert.deepEqual(health.missing,['MONGO_URI','GEMINI_API_KEY']);
+    assert.deepEqual(health.missing,['MONGO_URI']);
     assert.equal(health.features.accounts,false);
     assert.ok(!JSON.stringify(health).includes(env.JWT_SECRET));
     assert.equal((await fetch(root+'/api/ready')).status,503);
@@ -63,7 +63,7 @@ test('live setup serves the website while returning prompt, truthful 503 respons
     databaseState=1;
     const ready=await fetch(root+'/api/ready');
     assert.equal(ready.status,200);
-    assert.equal((await ready.json()).features.aiPlanning,true);
+    assert.equal((await ready.json()).features.tripPlanning,true);
     assert.equal((await fetch(root+'/api/ai/plan',{method:'POST'})).status,401);
     databaseState=0;
     assert.equal((await fetch(root+'/api/ready')).status,503);
@@ -76,6 +76,9 @@ test('database-backed accounts can activate independently of AI; weak JWT config
   const status=serviceStatus({env,databaseState:1});
   assert.equal(status.features.accounts,true);
   assert.equal(status.features.aiPlanning,false);
-  assert.equal(status.services.ai,'missing');
+  assert.equal(status.features.tripPlanning,true);
+  assert.equal(status.ready,true);
+  assert.deepEqual(status.missing,[]);
+  assert.equal(status.services.ai,'optional_off');
   assert.equal(serviceStatus({env:{...env,JWT_SECRET:'short'},databaseState:1}).features.accounts,false);
 });

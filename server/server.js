@@ -11,7 +11,7 @@ const port=process.env.PORT||5000;
 const server=createApp({demo}).listen(port,'0.0.0.0',()=>{
   console.log(`TripCraft listening on port ${port} (${demo?'demo':'live'} mode)`);
   const status=serviceStatus({demo});
-  if(status.missing.length)console.warn(`Setup required: ${status.missing.join(', ')}. Account and AI features stay disabled until ready.`);
+  if(status.missing.length)console.warn(`Setup required: ${status.missing.join(', ')}. Account and planning features stay disabled until ready.`);
 });
 let retryTimer,stopping=false;
 async function connectWithRetry(){

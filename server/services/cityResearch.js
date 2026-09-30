@@ -1,4 +1,8 @@
 import {normalizeCatalog,placeKey,stopsPerDay} from './itineraryQuality.js';
+import {setDefaultResultOrder} from 'node:dns';
+
+// Prefer reachable IPv4 addresses on hosts without outbound IPv6 routing.
+setDefaultResultOrder('ipv4first');
 
 const cache=new Map(),pending=new Map();
 const TTL=6*60*60*1000;
@@ -7,9 +11,17 @@ export const guideLicense={title:'Wikivoyage contributors · adapted guide text 
 export function parseJSON(text){return JSON.parse(String(text||'').trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,''));}
 const problem=(message,status=503)=>Object.assign(Error(message),{status});
 export async function publicJSON(url){
-  const response=await fetch(url,{headers:{'User-Agent':userAgent,Accept:'application/json'},signal:AbortSignal.timeout(22000)});
-  if(!response.ok)throw problem('The public destination guide is busy. Please try again shortly.');
-  return response.json();
+  let failure;
+  for(let attempt=0;attempt<2;attempt++){
+    try{
+      const response=await fetch(url,{headers:{'User-Agent':userAgent,Accept:'application/json'},signal:AbortSignal.timeout(22000)});
+      if(!response.ok)throw Object.assign(Error('Public provider response'),{code:`HTTP_${response.status}`,retry:response.status>=500});
+      return await response.json();
+    }catch(error){failure=error;if(error.retry===false)break;}
+  }
+  // Log only provider host and error code. Never expose headers, query strings or secrets.
+  console.warn(`Public data unavailable: ${new URL(url).hostname} (${failure?.cause?.code||failure?.code||failure?.name||'network'})`);
+  throw problem('The public destination-data service is temporarily unreachable. Please try again shortly.');
 }
 export function distance(a,b){
   if(!Number.isFinite(a?.lat)||!Number.isFinite(a?.lon)||!Number.isFinite(b?.lat)||!Number.isFinite(b?.lon))return null;

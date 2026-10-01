@@ -10,18 +10,28 @@ const userAgent='TripCraft/3.0 (https://tripcraft-by-ayarish.onrender.com; trave
 export const guideLicense={title:'Wikivoyage contributors · adapted guide text · CC BY-SA 4.0',url:'https://creativecommons.org/licenses/by-sa/4.0/'};
 export function parseJSON(text){return JSON.parse(String(text||'').trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,''));}
 const problem=(message,status=503)=>Object.assign(Error(message),{status});
+const responseCache=new Map(),requests=new Map();
 export async function publicJSON(url){
-  let failure;
-  for(let attempt=0;attempt<2;attempt++){
+  const hit=responseCache.get(url);
+  if(hit?.expires>Date.now())return structuredClone(hit.data);
+  if(requests.has(url))return structuredClone(await requests.get(url));
+  const request=(async()=>{
     try{
-      const response=await fetch(url,{headers:{'User-Agent':userAgent,Accept:'application/json'},signal:AbortSignal.timeout(22000)});
-      if(!response.ok)throw Object.assign(Error('Public provider response'),{code:`HTTP_${response.status}`,retry:response.status>=500});
-      return await response.json();
-    }catch(error){failure=error;if(error.retry===false)break;}
-  }
-  // Log only provider host and error code. Never expose headers, query strings or secrets.
-  console.warn(`Public data unavailable: ${new URL(url).hostname} (${failure?.cause?.code||failure?.code||failure?.name||'network'})`);
-  throw problem('The public destination-data service is temporarily unreachable. Please try again shortly.');
+      // Fail over to another provider instead of retrying the same unreachable host.
+      const response=await fetch(url,{headers:{'User-Agent':userAgent,Accept:'application/json'},signal:AbortSignal.timeout(10000)});
+      if(!response.ok)throw Object.assign(Error('Public provider response'),{code:`HTTP_${response.status}`});
+      const data=await response.json();
+      if(data.error)throw Error('Public provider API error');
+      if(responseCache.size>=200)responseCache.delete(responseCache.keys().next().value);
+      responseCache.set(url,{data,expires:Date.now()+TTL});
+      return data;
+    }catch(error){
+      console.warn(`Public data unavailable: ${new URL(url).hostname} (${error?.cause?.code||error?.code||error?.name||'network'})`);
+      throw problem('The public destination-data services are temporarily unreachable. Please try again shortly.');
+    }
+  })();
+  requests.set(url,request);
+  try{return structuredClone(await request);}finally{requests.delete(url);}
 }
 export function distance(a,b){
   if(!Number.isFinite(a?.lat)||!Number.isFinite(a?.lon)||!Number.isFinite(b?.lat)||!Number.isFinite(b?.lon))return null;
@@ -32,17 +42,41 @@ const regionLocations={
   bali:{city:'Bali',country:'Indonesia',countryCode:'ID',lat:-8.43,lon:115.167,radius:85,region:true},
   dolomites:{city:'Dolomites',country:'Italy',countryCode:'IT',lat:46.5,lon:11.85,radius:90,region:true}
 };
+const locationSource={title:'Location data · Open-Meteo / GeoNames',url:'https://open-meteo.com/en/docs/geocoding-api'};
+const mapSource={title:'© OpenStreetMap contributors · ODbL (via Photon / Overpass)',url:'https://www.openstreetmap.org/copyright'};
+const aliases={usa:'united states',us:'united states',uk:'united kingdom',uae:'united arab emirates'};
+const same=(a,b)=>placeKey(aliases[placeKey(a)]||a)===placeKey(aliases[placeKey(b)]||b);
+const validPoint=p=>Number.isFinite(p.lat)&&Number.isFinite(p.lon)&&Math.abs(p.lat)<=90&&Math.abs(p.lon)<=180;
 export async function resolveDestination(destination,{getJSON=publicJSON}={}){
   const [name,...qualifiers]=destination.split(',').map(s=>s.trim()).filter(Boolean);
+  if(!name)throw problem('Enter a city and country.',422);
   const region=regionLocations[placeKey(name)];
-  if(region&&qualifiers.every(q=>[placeKey(region.country),placeKey(region.countryCode)].includes(placeKey(q))))return {...region};
-  const data=await getJSON('https://geocoding-api.open-meteo.com/v1/search?'+new URLSearchParams({name,count:'30',language:'en',format:'json'}));
-  const aliases={'usa':'united states','us':'united states','uk':'united kingdom','uae':'united arab emirates'};
-  const match=(a,b)=>placeKey(a)===placeKey(b);
-  const results=(data.results||[]).filter(p=>qualifiers.every(q=>[p.country,p.country_code,p.admin1,p.admin2,p.admin3].some(v=>match(aliases[placeKey(q)]||q,v))));
-  const p=results.find(p=>match(p.name,name))||results[0];
-  if(!p)throw problem('We could not locate that destination. Enter a city and country, for example Jaipur, India.',422);
-  return {city:p.name,country:p.country||'',countryCode:p.country_code,lat:p.latitude,lon:p.longitude,radius:30,region:false};
+  if(region&&qualifiers.every(q=>[region.country,region.countryCode].some(v=>same(q,v))))return {...region,locationSource};
+  let successful=0;
+  try{
+    const data=await getJSON('https://geocoding-api.open-meteo.com/v1/search?'+new URLSearchParams({name,count:'30',language:'en',format:'json'}));
+    successful++;
+    const results=(data.results||[]).filter(p=>validPoint({lat:p.latitude,lon:p.longitude})&&qualifiers.every(q=>[p.country,p.country_code,p.admin1,p.admin2,p.admin3].some(v=>same(q,v))));
+    const p=results.find(p=>same(p.name,name))||results[0];
+    if(p)return {city:p.name,country:p.country||'',countryCode:p.country_code,lat:p.latitude,lon:p.longitude,radius:30,region:false,locationSource};
+  }catch{ /* Search an independent OSM index when GeoNames is unavailable. */ }
+  try{
+    const data=await getJSON('https://photon.komoot.io/api/?'+new URLSearchParams({q:destination,limit:'15',lang:'en'}));
+    successful++;
+    const features=(data.features||[]).filter(f=>{
+      const p=f.properties||{},[lon,lat]=f.geometry?.coordinates||[];
+      return validPoint({lat,lon})&&['city','town','village','hamlet','locality','district','county','state','island'].includes(p.type||p.osm_value)&&
+        qualifiers.every(q=>[p.country,p.countrycode,p.state,p.county,p.city].some(v=>same(q,v)));
+    });
+    // Prefer a settlement over a same-named isolated dwelling or broad province.
+    const rank=f=>({city:100,town:90,village:80,hamlet:70,state:60,county:50,district:40,island:35,locality:20}[f.properties.type||f.properties.osm_value]||0)+(same(f.properties.name,name)?10:0);
+    const f=features.sort((a,b)=>rank(b)-rank(a))[0];
+    if(f){const p=f.properties,[lon,lat]=f.geometry.coordinates;
+      return {city:p.name,country:p.country||'',countryCode:p.countrycode?.toUpperCase(),lat,lon,radius:30,region:false,locationSource:mapSource};
+    }
+  }catch{ /* Preserve the distinction between no matches and a total outage. */ }
+  if(!successful)throw problem('Destination search providers are temporarily unavailable. Please try again shortly.');
+  throw problem('We could not locate that destination. Enter a city and country, for example Jaipur, India.',422);
 }
 
 // Nested links/templates contain pipes: parse named sightseeing listings without splitting those fields.
@@ -129,9 +163,24 @@ export function parseOpenMap(data,location){
 }
 async function openMapPlaces(location,getJSON){
   const around=`(around:${Math.min(location.radius,30)*1000},${location.lat},${location.lon})`;
-  const query=`[out:json][timeout:18];(nwr["tourism"~"^(attraction|museum|gallery|viewpoint)$"]["name"]${around};nwr["historic"~"^(castle|monument)$"]["name"]["wikidata"]${around};nwr["leisure"="park"]["name"]["wikidata"]${around};);out center tags 800;`;
+  const query=`[out:json][timeout:8];(nwr["tourism"~"^(attraction|museum|gallery|viewpoint)$"]["name"]${around};nwr["historic"~"^(castle|monument)$"]["name"]["wikidata"]${around};nwr["leisure"="park"]["name"]["wikidata"]${around};);out center tags 800;`;
   const data=await getJSON('https://overpass-api.de/api/interpreter?'+new URLSearchParams({data:query}));
   return parseOpenMap(data,location);
+}
+// Photon offers an independent OSM index when Overpass or Wikivoyage is down.
+export function parsePhotonPlaces(data,location){
+  const typeMap={N:'node',W:'way',R:'relation'};
+  return parseOpenMap({elements:(data.features||[]).flatMap(f=>{
+    const p=f.properties||{},[lon,lat]=f.geometry?.coordinates||[],type=typeMap[p.osm_type];
+    const allowed={tourism:['attraction','museum','gallery','viewpoint'],historic:['castle','monument','memorial'],leisure:['park','garden']};
+    if(!type||!Number.isSafeInteger(p.osm_id)||!allowed[p.osm_key]?.includes(p.osm_value))return [];
+    return [{type,id:p.osm_id,lat,lon,tags:{name:p.name,[p.osm_key]:p.osm_value,'addr:city':p.city}}];
+  })},location);
+}
+async function photonPlaces(location,getJSON){
+  const params=new URLSearchParams({lat:String(location.lat),lon:String(location.lon),radius:String(Math.min(location.radius,30)),limit:'50',lang:'en'});
+  for(const tag of ['tourism:attraction','tourism:museum','tourism:gallery','tourism:viewpoint','historic:castle','historic:monument','leisure:park'])params.append('osm_tag',tag);
+  return parsePhotonPlaces(await getJSON('https://photon.komoot.io/reverse?'+params),location);
 }
 async function loadCity(form,getJSON){
   const location=await resolveDestination(form.destination,{getJSON});
@@ -149,7 +198,8 @@ async function loadCity(form,getJSON){
     }
   }catch{ /* A public guide outage can use mapped attractions instead. */ }
   if(places.length<Math.max(8,Number(form.days)*2)){
-    try{places.push(...await openMapPlaces(location,getJSON));usedMap=true;}catch{ /* Never invent sightseeing to fill missing data. */ }
+    const results=await Promise.allSettled([openMapPlaces(location,getJSON),photonPlaces(location,getJSON)]);
+    for(const result of results)if(result.status==='fulfilled'&&result.value.length){places.push(...result.value);usedMap=true;}
   }
   places.sort((a,b)=>Number(b.famous)-Number(a.famous));
   const catalog=normalizeCatalog({...location,places});
@@ -157,7 +207,7 @@ async function loadCity(form,getJSON){
   const sources=pages.filter(p=>sourceURLs.has('https://en.wikivoyage.org/wiki/'+encodeURIComponent(p.title.replaceAll(' ','_')))).map(p=>({title:`Wikivoyage contributors · ${p.title}`,url:'https://en.wikivoyage.org/wiki/'+encodeURIComponent(p.title.replaceAll(' ','_'))}));
   if(sources.length)sources.push(guideLicense);
   if(usedMap)sources.push({title:'© OpenStreetMap contributors · ODbL',url:'https://www.openstreetmap.org/copyright'});
-  sources.push({title:'Location data · Open-Meteo / GeoNames',url:'https://open-meteo.com/en/docs/geocoding-api'});
+  sources.push(location.locationSource||locationSource);
   return {...catalog,region:location.region,sources,researchAt:new Date().toISOString(),attribution:'Place descriptions adapted from linked community sources. Wikivoyage text is CC BY-SA 4.0; mapped attraction data is © OpenStreetMap contributors (ODbL). TripCraft schedules and budget allowances are generated separately.'};
 }
 export async function researchCity(_ai,form,{getJSON=publicJSON}={}){

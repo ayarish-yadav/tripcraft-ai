@@ -103,3 +103,38 @@ test('country qualifiers are respected and mapped places deduplicate across alia
  const b=normalizeCatalog({...location,places:parseOpenMap({elements:[nodes[1]]},location)});
  assert.equal(a.places[0].id,b.places[0].id);
 });
+
+test('destination lookup fails over on outages while preserving country and state qualifiers',async()=>{
+ const photon={features:[{properties:{name:'Paris',country:'France',countrycode:'FR',type:'city'},geometry:{coordinates:[2.35,48.85]}},{properties:{name:'Paris',country:'United States',countrycode:'US',state:'Texas',type:'city'},geometry:{coordinates:[-95.55,33.66]}}]};
+ const getJSON=async url=>{if(url.includes('open-meteo'))throw Error('timeout');return photon;};
+ assert.equal((await resolveDestination('Paris, Texas, USA',{getJSON})).countryCode,'US');
+ assert.equal((await resolveDestination('Paris, France',{getJSON})).countryCode,'FR');
+ await assert.rejects(resolveDestination('Paris, India',{getJSON}),e=>e.status===422);
+ await assert.rejects(resolveDestination('Tokyo',{getJSON:async()=>{throw Error('offline');}}),e=>e.status===503);
+ await assert.rejects(resolveDestination('Missing',{getJSON:async()=>({features:[{properties:{name:'Missing',type:'city'},geometry:{coordinates:[999,999]}}]})}),e=>e.status===422);
+});
+
+test('a complete itinerary survives geocoder, guide and Overpass outages using sourced Photon places',async()=>{
+ const {parsePhotonPlaces}=await import('../services/cityResearch.js');
+ const features=Array.from({length:12},(_,i)=>({properties:{name:`Fallback Museum ${i}`,osm_type:'N',osm_id:9000+i,osm_key:'tourism',osm_value:'museum'},geometry:{coordinates:[75.8+i*.003,26.9+i*.003]}}));
+ const getJSON=async url=>{
+  if(url.includes('/api/?'))return {features:[{properties:{name:'Fallback City',country:'India',countrycode:'IN',type:'city'},geometry:{coordinates:[75.8,26.9]}}]};
+  if(url.includes('/reverse?'))return {features};
+  throw Error('Provider offline');
+ };
+ const f={...form,destination:'Fallback City, India'};
+ const c=await researchCity(null,f,{getJSON});
+ assert.equal(c.places.length,12);
+ assert.ok(c.places.every(p=>p.sourceUrl.startsWith('https://www.openstreetmap.org/node/')));
+ assert.ok(c.sources.some(s=>s.url==='https://www.openstreetmap.org/copyright'));
+ assert.deepEqual(inspectItinerary(planFree(f,'',c),f,c),[]);
+ const location={lat:26.9,lon:75.8,radius:30,city:'Fallback City'};
+ assert.equal(parsePhotonPlaces({features:[...features,{...features[0],properties:{...features[0].properties,osm_value:'hotel'}},{...features[0],geometry:{coordinates:[0,0]}}]},location).length,12);
+});
+
+
+test('a same-named remote locality does not outrank the destination city',async()=>{
+ const data={features:[{properties:{name:'Cusco',country:'Peru',type:'locality'},geometry:{coordinates:[-79.78,-4.58]}},{properties:{name:'Distrito de Cusco',country:'Peru',type:'city'},geometry:{coordinates:[-71.97,-13.50]}}]};
+ const p=await resolveDestination('Cusco, Peru',{getJSON:async url=>{if(url.includes('open-meteo'))throw Error('offline');return data;}});
+ assert.equal(p.city,'Distrito de Cusco');assert.equal(p.lat,-13.50);
+});

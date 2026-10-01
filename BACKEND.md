@@ -73,3 +73,22 @@ The independent site is https://tripcraft-by-ayarish.onrender.com/. No custom do
 `npm --prefix server test` covers free planning, budget/time/place invariants, AI quota fallback, no AI calls in default mode, targeted replans, public-data parsing, country matching, source attribution, cache behavior, JWT validation and HTTP readiness. `npm run test:render` renders all eight pages. Fixture tests complement deployment checks; they are not a claim that a third-party provider will always be reachable.
 
 Sources: [MediaWiki API](https://www.mediawiki.org/wiki/API:Revisions), [Wikivoyage listings](https://en.wikivoyage.org/wiki/Wikivoyage:Listings), [OpenStreetMap attribution](https://www.openstreetmap.org/copyright), [Open-Meteo geocoding](https://open-meteo.com/en/docs/geocoding-api), [Render free services](https://render.com/docs/free).
+
+### Public-data failover (October 2026)
+
+Destination lookup tries Open-Meteo/GeoNames, then the independent Photon OSM
+index. Country/state qualifiers and coordinate bounds are checked on both paths;
+Photon settlements take precedence over same-named remote localities. Wikivoyage
+remains the guide source. When it has too few places, Overpass and Photon's nearby
+OSM attractions are queried independently. Hotels and unrelated map features are
+excluded, and the existing geographic/deduplication checks still apply.
+
+Each public request has a 10-second deadline rather than retrying the same failing
+host. Successful responses are cached for six hours (maximum 200 entries), with
+concurrent identical requests coalesced. No API keys or paid services are required.
+Photon's public server is intended for reasonable traffic and may throttle heavy
+usage; coverage and uptime of community data are not guaranteed. Sparse results
+still ask for fewer days instead of inventing or repeating attractions.
+
+Sources: https://github.com/komoot/photon (API and fair-use guidance),
+https://www.openstreetmap.org/copyright (ODbL attribution).
